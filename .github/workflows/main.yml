@@ -1,4 +1,4 @@
-name: Auto Convert Images & PDFs to WebP + JSON + Covers (Token-Free)
+name: Auto Convert Images & PDFs to WebP + JSON + Covers (Token-Hardcoded)
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
       - "upload/**"
 
 jobs:
-  convert:
+  convert_and_commit:
     runs-on: ubuntu-latest
 
     steps:
@@ -18,9 +18,9 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y webp jq poppler-utils
+          sudo apt-get install -y webp jq poppler-utils git imagemagick
 
-      # 3️⃣ Process uploads (covers, PDFs, images)
+      # 3️⃣ Process uploads
       - name: Process uploads
         run: |
           echo "Processing uploaded files..."
@@ -29,24 +29,26 @@ jobs:
             rel_dir=$(dirname "$rel_dir")
             target="comic/$rel_dir"
             mkdir -p "$target"
-
+            
             base_name=$(basename "$file")
+            ext="${base_name##*.}"
+            ext_lc=$(echo "$ext" | tr '[:upper:]' '[:lower:]')
 
             # --- COVER FILE ---
             if [[ "$base_name" =~ ^cover.*\.(pdf|jpg|jpeg|png|webp|avif)$ ]]; then
-              if [[ "$file" =~ \.pdf$ ]]; then
+              if [[ "$ext_lc" == "pdf" ]]; then
                 pdftoppm -png "$file" "$target/temp_cover" -f 1 -singlefile
                 cwebp -q 80 "$target/temp_cover.png" -o "$target/cover.webp"
                 rm "$target/temp_cover.png"
               else
-                cwebp -q 80 "$file" -o "$target/cover.webp"
+                cwebp -q 80 "$file" -o "$target/cover.webp" || convert "$file" "$target/cover.webp"
               fi
               rm "$file"
               continue
             fi
 
             # --- EPISODE PDF ---
-            if [[ "$file" =~ \.pdf$ ]]; then
+            if [[ "$ext_lc" == "pdf" ]]; then
               pdftoppm -png "$file" "$target/page"
               rm "$file"
               for img in "$target"/page-*.png; do
@@ -56,8 +58,8 @@ jobs:
               continue
             fi
 
-            # --- IMAGE FILES ---
-            cwebp -q 80 "$file" -o "$target/${base_name%.*}.webp"
+            # --- IMAGE FILES (all types) ---
+            cwebp -q 80 "$file" -o "$target/${base_name%.*}.webp" 2>/dev/null || convert "$file" "$target/${base_name%.*}.webp"
             rm "$file"
           done
 
@@ -90,28 +92,38 @@ jobs:
             comic=$(echo "$epdir" | cut -d'/' -f2)
             season=$(echo "$epdir" | cut -d'/' -f3 | sed 's/season-//')
             episode=$(echo "$epdir" | cut -d'/' -f4 | sed 's/episode-//')
-
+            
             json_file="$epdir/episode.json"
-
-            {
-              echo "{"
-              echo "  \"comic\": \"$comic\","
-              echo "  \"season\": $season,"
-              echo "  \"episode\": $episode,"
-              echo "  \"imageCount\": $(find "$epdir" -maxdepth 1 -type f -iname "*.webp" ! -name "cover.webp" | wc -l),"
-              echo "  \"images\": ["
-              find "$epdir" -maxdepth 1 -type f -iname "*.webp" ! -name "cover.webp" | sort | while read img; do
-                echo "    \"https://cdn.spineassociation.in/${img#comic/}\","
-              done
-              sed '$ s/,$//' <<< ""
-              echo "  ]"
-              echo "}"
-            } > "$json_file"
+            
+            echo "{" > $json_file
+            echo "  \"comic\": \"$comic\"," >> $json_file
+            echo "  \"season\": $season," >> $json_file
+            echo "  \"episode\": $episode," >> $json_file
+            echo "  \"imageCount\": $(find "$epdir" -maxdepth 1 -type f -iname "*.webp" ! -name "cover.webp" | wc -l)," >> $json_file
+            echo "  \"images\": [" >> $json_file
+            find "$epdir" -maxdepth 1 -type f -iname "*.webp" ! -name "cover.webp" | sort | while read img; do
+              url="https://cdn.spineassociation.in/${img#comic/}"
+              echo "    \"$url\"," >> $json_file
+            done
+            # Remove trailing comma
+            sed -i '$ s/,$//' $json_file
+            echo "  ]" >> $json_file
+            echo "}" >> $json_file
           done
 
-      # 7️⃣ Upload processed files as artifact (using v4)
-      - name: Upload processed files as artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: spine_processed_comics
-          path: comic/
+      # 7️⃣ Commit comic updates automatically
+      - name: Commit comic updates
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add comic/
+          git commit -m "Auto: processed uploads $(date +'%Y-%m-%d %H:%M:%S')" || echo "No changes to commit"
+          git push https://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@github.com/PrithviRajSanotiya/spinetoons.git HEAD:main
+
+      # 8️⃣ Delete old upload files after committing
+      - name: Clean upload folder
+        run: |
+          rm -rf upload/*
+          git add upload/
+          git commit -m "Auto: cleared upload folder after processing" || echo "Upload folder already empty"
+          git push https://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@github.com/PrithviRajSanotiya/spinetoons.git HEAD:main
