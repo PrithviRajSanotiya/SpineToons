@@ -20,7 +20,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y webp jq poppler-utils git imagemagick
 
-      # 3️⃣ Process uploads (covers, PDFs, all images in chapters)
+      # 3️⃣ Process uploads (covers, PDFs, all images)
       - name: Process uploads
         run: |
           echo "Processing uploaded files..."
@@ -58,11 +58,11 @@ jobs:
               continue
             fi
 
-            # --- ALL IMAGE TYPES (nested inside chapters) ---
+            # --- ALL IMAGE TYPES ---
             if [[ "$ext_lc" =~ ^(jpg|jpeg|png|webp|avif)$ ]]; then
               cwebp -q 80 "$file" -o "$target/${base_name%.*}.webp" 2>/dev/null || convert "$file" "$target/${base_name%.*}.webp"
             else
-              # Fallback for other image types
+              # Fallback for any other image types
               convert "$file" "$target/${base_name%.*}.webp"
             fi
             rm "$file"
@@ -110,24 +110,24 @@ jobs:
               url="https://cdn.spineassociation.in/${img#comic/}"
               echo "    \"$url\"," >> $json_file
             done
-            sed -i '$ s/,$//' $json_file  # Remove trailing comma
+            sed -i '$ s/,$//' $json_file
             echo "  ]" >> $json_file
             echo "}" >> $json_file
           done
 
-      # 7️⃣ Commit comic updates automatically using GITHUB_TOKEN
+      # 7️⃣ Commit comic updates automatically (no 403)
       - name: Commit comic updates
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add comic/
           git commit -m "Auto: processed uploads $(date +'%Y-%m-%d %H:%M:%S')" || echo "No changes to commit"
-          git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/PrithviRajSanotiya/spinetoons.git HEAD:main
+          git push origin HEAD:main
 
-      # 8️⃣ Delete old upload files after committing
+      # 8️⃣ Clean upload folder after commit
       - name: Clean upload folder
         run: |
           rm -rf upload/*
           git add upload/
           git commit -m "Auto: cleared upload folder after processing" || echo "Upload folder already empty"
-          git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/PrithviRajSanotiya/spinetoons.git HEAD:main
+          git push origin HEAD:main
