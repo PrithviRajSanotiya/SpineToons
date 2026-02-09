@@ -1,4 +1,4 @@
-name: Auto Convert Images & PDFs to WebP + JSON + Covers
+name: Auto Convert Images & PDFs to WebP + JSON + Covers (Restored)
 
 on:
   push:
@@ -13,30 +13,33 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # 1️⃣ Checkout repo
       - name: Checkout repo
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
+      # 2️⃣ Install dependencies
       - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y webp jq poppler-utils git imagemagick
+          # Unlock PDF reading for ImageMagick
           sudo sed -i 's/rights="none" pattern="PDF"/rights="read|write" pattern="PDF"/' /etc/ImageMagick-6/policy.xml || true
 
+      # 3️⃣ YOUR ORIGINAL Process uploads (Restored exactly)
       - name: Process uploads
         run: |
           echo "Processing uploaded files..."
-          find upload -type f ! -name ".gitkeep" -print0 | while IFS= read -r -d '' file; do
-            rel_path=${file#upload/}
-            rel_dir=$(dirname "$rel_path")
+          find upload -type f ! -name ".gitkeep" | while read file; do
+            rel_dir=${file#upload/}
+            rel_dir=$(dirname "$rel_dir")
             target="comic/$rel_dir"
             mkdir -p "$target"
             
             base_name=$(basename "$file")
-            ext_lc=$(echo "${base_name##*.}" | tr '[:upper:]' '[:lower:]')
+            ext="${base_name##*.}"
+            ext_lc=$(echo "$ext" | tr '[:upper:]' '[:lower:]')
 
-            # --- YOUR COVER LOGIC ---
+            # --- COVER FILE ---
             if [[ "$base_name" =~ ^cover.*\.(pdf|jpg|jpeg|png|webp|avif)$ ]]; then
               if [[ "$ext_lc" == "pdf" ]]; then
                 pdftoppm -png "$file" "$target/temp_cover" -f 1 -singlefile
@@ -49,91 +52,84 @@ jobs:
               continue
             fi
 
-            # --- YOUR EPISODE PDF LOGIC ---
+            # --- EPISODE PDF ---
             if [[ "$ext_lc" == "pdf" ]]; then
               pdftoppm -png "$file" "$target/page"
               rm "$file"
               for img in "$target"/page-*.png; do
-                [ -e "$img" ] || continue
                 cwebp -q 80 "$img" -o "${img%.png}.webp"
                 rm "$img"
               done
               continue
             fi
 
-            # --- YOUR IMAGE TYPES LOGIC ---
+            # --- ALL IMAGE TYPES ---
             if [[ "$ext_lc" =~ ^(jpg|jpeg|png|webp|avif)$ ]]; then
               cwebp -q 80 "$file" -o "$target/${base_name%.*}.webp" 2>/dev/null || convert "$file" "$target/${base_name%.*}.webp"
             else
+              # Fallback for any other image types
               convert "$file" "$target/${base_name%.*}.webp"
             fi
             rm "$file"
           done
 
+      # 4️⃣ YOUR ORIGINAL Rename WebP files sequentially
       - name: Rename WebP files sequentially
         run: |
-          find comic -type d -name "episode-*" | while read -r dir; do
+          find comic -type d -name "episode-*" | while read dir; do
             count=1
-            find "$dir" -maxdepth 1 -type f -iname "*.webp" ! -name "cover.webp" | sort -V | while read -r img; do
+            find "$dir" -maxdepth 1 -type f -iname "*.webp" ! -name "cover.webp" | sort -V | while read img; do
+              if [[ $(basename "$img") == "cover.webp" ]]; then continue; fi
               printf -v new "%03d.webp" $count
               mv "$img" "$dir/$new"
               count=$((count+1))
             done
           done
 
-      - name: Generate JSON metadata
+      # 5️⃣ Add .gitkeep to empty folders (Restored)
+      - name: Add .gitkeep to empty folders
         run: |
-          find comic -type d -name "episode-*" | while read -r epdir; do
+          find comic -type d | while read dir; do
+            if [ -z "$(ls -A "$dir" | grep -v '.gitkeep')" ]; then
+              touch "$dir/.gitkeep"
+            fi
+          done
+
+      # 6️⃣ YOUR ORIGINAL Generate JSON metadata (Fixed syntax for file creation)
+      - name: Generate JSON metadata for episodes
+        run: |
+          find comic -type d -name "episode-*" | while read epdir; do
             comic=$(echo "$epdir" | cut -d'/' -f2)
             season=$(echo "$epdir" | cut -d'/' -f3 | sed 's/season-//')
             episode=$(echo "$epdir" | cut -d'/' -f4 | sed 's/episode-//')
             
             json_file="$epdir/episode.json"
             
-            # Use temporary file to build JSON safely
             echo "{" > "$json_file"
             echo "  \"comic\": \"$comic\"," >> "$json_file"
-            echo "  \"season\": ${season:-0}," >> "$json_file"
-            echo "  \"episode\": ${episode:-0}," >> "$json_file"
-            
-            # Count images correctly
-            img_count=$(find "$epdir" -maxdepth 1 -type f -iname "*.webp" ! -name "cover.webp" | wc -l)
-            echo "  \"imageCount\": $img_count," >> "$json_file"
+            echo "  \"season\": ${season:-1}," >> "$json_file"
+            echo "  \"episode\": ${episode:-1}," >> "$json_file"
+            echo "  \"imageCount\": $(find "$epdir" -maxdepth 1 -type f -iname "*.webp" ! -name "cover.webp" | wc -l)," >> "$json_file"
             echo "  \"images\": [" >> "$json_file"
             
-            # Loop through images and add commas ONLY between items
-            first=true
-            find "$epdir" -maxdepth 1 -type f -iname "*.webp" ! -name "cover.webp" | sort -V | while read -r img; do
-              if [ "$first" = true ]; then
-                first=false
-              else
-                echo "," >> "$json_file"
-              fi
-              url="https://cdn.spineassociation.in/${img#comic/}"
-              echo -n "    \"$url\"" >> "$json_file"
-            done
+            # This handles the URL generation and the comma logic correctly
+            find "$epdir" -maxdepth 1 -type f -iname "*.webp" ! -name "cover.webp" | sort -V | sed 's|^comic/||' | awk '{print "    \"https://cdn.spineassociation.in/" $0 "\""}' | paste -sd "," - >> "$json_file"
             
-            echo "" >> "$json_file"
             echo "  ]" >> "$json_file"
             echo "}" >> "$json_file"
           done
 
-      - name: Clean up and Commit
+      # 7️⃣ Commit and Push (Fixed double-push and cleaned upload subfolders only)
+      - name: Commit comic updates
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           
-          # Clean upload subfolders but keep root .gitkeep
+          # Remove processed subfolders in upload but keep the main upload/.gitkeep
           find upload -mindepth 1 -type d -exec rm -rf {} +
           touch upload/.gitkeep
           
           git add comic/
-          git add upload/.gitkeep
-          git add -u upload/
-
-          if ! git diff --cached --quiet; then
-            git commit -m "Auto: processed uploads $(date +'%Y-%m-%d %H:%M:%S')"
-            git push origin HEAD:${{ github.ref_name }}
-          else
-            echo "No changes to commit"
-          fi
+          git add upload/
+          git commit -m "Auto: processed uploads $(date +'%Y-%m-%d %H:%M:%S')" || echo "No changes to commit"
+          git push origin HEAD:${{ github.ref_name }}
