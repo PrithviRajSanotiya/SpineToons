@@ -1,4 +1,4 @@
-name: Auto Convert Images & PDFs to WebP + JSON + Covers
+name: Auto Convert Images & PDFs to WebP + JSON + Covers (Token-Free)
 
 on:
   push:
@@ -10,19 +10,20 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # 1️⃣ Checkout repo
       - name: Checkout repo
         uses: actions/checkout@v4
 
+      # 2️⃣ Install dependencies
       - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y webp jq poppler-utils
 
+      # 3️⃣ Process uploads (cover, PDFs, images)
       - name: Process uploads
         run: |
           echo "Processing uploaded files..."
-          
-          # Loop through all files
           find upload -type f ! -name ".gitkeep" | while read file; do
             rel_dir=${file#upload/}
             rel_dir=$(dirname "$rel_dir")
@@ -34,12 +35,10 @@ jobs:
             # --- COVER FILE ---
             if [[ "$base_name" =~ ^cover.*\.(pdf|jpg|jpeg|png|webp|avif)$ ]]; then
               if [[ "$file" =~ \.pdf$ ]]; then
-                # Convert first page of cover PDF to WebP
                 pdftoppm -png "$file" "$target/temp_cover" -f 1 -singlefile
                 cwebp -q 80 "$target/temp_cover.png" -o "$target/cover.webp"
                 rm "$target/temp_cover.png"
               else
-                # Image cover conversion
                 cwebp -q 80 "$file" -o "$target/cover.webp"
               fi
               rm "$file"
@@ -48,10 +47,8 @@ jobs:
             
             # --- EPISODE PDF ---
             if [[ "$file" =~ \.pdf$ ]]; then
-              # Convert all pages of episode PDF to PNG
               pdftoppm -png "$file" "$target/page"
               rm "$file"
-              # Convert PNG pages to WebP
               for img in "$target"/page-*.png; do
                 cwebp -q 80 "$img" -o "${img%.png}.webp"
                 rm "$img"
@@ -64,13 +61,12 @@ jobs:
             rm "$file"
           done
 
+      # 4️⃣ Rename WebP files sequentially
       - name: Rename WebP files sequentially
         run: |
-          echo "Renaming WebP files sequentially..."
           find comic -type d -name "episode-*" | while read dir; do
             count=1
             find "$dir" -maxdepth 1 -type f -iname "*.webp" | sort | while read img; do
-              # Skip cover if present in episode folder (rare)
               if [[ $(basename "$img") == "cover.webp" ]]; then continue; fi
               printf -v new "%03d.webp" $count
               mv "$img" "$dir/$new"
@@ -78,6 +74,7 @@ jobs:
             done
           done
 
+      # 5️⃣ Add .gitkeep to empty folders
       - name: Add .gitkeep to empty folders
         run: |
           find comic -type d | while read dir; do
@@ -86,6 +83,7 @@ jobs:
             fi
           done
 
+      # 6️⃣ Generate JSON per episode
       - name: Generate JSON metadata for episodes
         run: |
           find comic -type d -name "episode-*" | while read epdir; do
@@ -110,10 +108,9 @@ jobs:
             echo "}" >> $json_file
           done
 
-      - name: Commit changes
-        run: |
-          git config user.name "PrithviRajSanotiya"
-          git config user.email "PrithviRajSanotiya@users.noreply.github.com"
-          git add comic
-          git commit -m "Auto convert images/PDFs + generate JSON + covers" || echo "No changes"
-          git push
+      # 7️⃣ Optional: Save processed files as artifact
+      - name: Upload processed files as artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: spine_processed_comics
+          path: comic/
