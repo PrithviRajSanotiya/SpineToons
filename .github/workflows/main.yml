@@ -20,7 +20,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y webp jq poppler-utils
 
-      # 3️⃣ Process uploads (cover, PDFs, images)
+      # 3️⃣ Process uploads (covers, PDFs, images)
       - name: Process uploads
         run: |
           echo "Processing uploaded files..."
@@ -29,9 +29,9 @@ jobs:
             rel_dir=$(dirname "$rel_dir")
             target="comic/$rel_dir"
             mkdir -p "$target"
-            
+
             base_name=$(basename "$file")
-            
+
             # --- COVER FILE ---
             if [[ "$base_name" =~ ^cover.*\.(pdf|jpg|jpeg|png|webp|avif)$ ]]; then
               if [[ "$file" =~ \.pdf$ ]]; then
@@ -44,7 +44,7 @@ jobs:
               rm "$file"
               continue
             fi
-            
+
             # --- EPISODE PDF ---
             if [[ "$file" =~ \.pdf$ ]]; then
               pdftoppm -png "$file" "$target/page"
@@ -55,7 +55,7 @@ jobs:
               done
               continue
             fi
-            
+
             # --- IMAGE FILES ---
             cwebp -q 80 "$file" -o "$target/${base_name%.*}.webp"
             rm "$file"
@@ -83,35 +83,35 @@ jobs:
             fi
           done
 
-      # 6️⃣ Generate JSON per episode
+      # 6️⃣ Generate JSON metadata for episodes
       - name: Generate JSON metadata for episodes
         run: |
           find comic -type d -name "episode-*" | while read epdir; do
             comic=$(echo "$epdir" | cut -d'/' -f2)
             season=$(echo "$epdir" | cut -d'/' -f3 | sed 's/season-//')
             episode=$(echo "$epdir" | cut -d'/' -f4 | sed 's/episode-//')
-            
+
             json_file="$epdir/episode.json"
-            
-            echo "{" > $json_file
-            echo "  \"comic\": \"$comic\"," >> $json_file
-            echo "  \"season\": $season," >> $json_file
-            echo "  \"episode\": $episode," >> $json_file
-            echo "  \"imageCount\": $(find "$epdir" -maxdepth 1 -type f -iname "*.webp" ! -name "cover.webp" | wc -l)," >> $json_file
-            echo "  \"images\": [" >> $json_file
-            find "$epdir" -maxdepth 1 -type f -iname "*.webp" ! -name "cover.webp" | sort | while read img; do
-              url="https://cdn.spineassociation.in/${img#comic/}"
-              echo "    \"$url\"," >> $json_file
-            done
-            sed -i '$ s/,$//' $json_file
-            echo "  ]" >> $json_file
-            echo "}" >> $json_file
+
+            {
+              echo "{"
+              echo "  \"comic\": \"$comic\","
+              echo "  \"season\": $season,"
+              echo "  \"episode\": $episode,"
+              echo "  \"imageCount\": $(find "$epdir" -maxdepth 1 -type f -iname "*.webp" ! -name "cover.webp" | wc -l),"
+              echo "  \"images\": ["
+              find "$epdir" -maxdepth 1 -type f -iname "*.webp" ! -name "cover.webp" | sort | while read img; do
+                echo "    \"https://cdn.spineassociation.in/${img#comic/}\","
+              done
+              sed '$ s/,$//' <<< ""
+              echo "  ]"
+              echo "}"
+            } > "$json_file"
           done
 
-      # 7️⃣ Optional: Save processed files as artifact
+      # 7️⃣ Upload processed files as artifact (using v4)
       - name: Upload processed files as artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: spine_processed_comics
           path: comic/
-          
