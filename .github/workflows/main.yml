@@ -5,7 +5,6 @@ on:
     paths:
       - "upload/**"
 
-# 🔑 FIX: This is required to allow the bot to push changes back to your repo
 permissions:
   contents: write
 
@@ -14,33 +13,31 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1️⃣ Checkout repo
       - name: Checkout repo
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # 2️⃣ Install dependencies
       - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y webp jq poppler-utils git imagemagick
-          # Unlock PDF processing in ImageMagick
           sudo sed -i 's/rights="none" pattern="PDF"/rights="read|write" pattern="PDF"/' /etc/ImageMagick-6/policy.xml || true
 
-      # 3️⃣ Process uploads (Covers, PDFs, all images)
       - name: Process uploads
         run: |
           echo "Processing uploaded files..."
-          # Using -print0 to handle filenames with spaces correctly
+          # Use -print0 to handle spaces safely
           find upload -type f ! -name ".gitkeep" -print0 | while IFS= read -r -d '' file; do
-            rel_dir=$(dirname "${file#upload/}")
+            # Extract path: upload/ComicName/season-1/episode-1/image.png 
+            # becomes comic/ComicName/season-1/episode-1/
+            rel_path=${file#upload/}
+            rel_dir=$(dirname "$rel_path")
             target="comic/$rel_dir"
             mkdir -p "$target"
             
             base_name=$(basename "$file")
-            ext="${base_name##*.}"
-            ext_lc=$(echo "$ext" | tr '[:upper:]' '[:lower:]')
+            ext_lc=$(echo "${base_name##*.}" | tr '[:upper:]' '[:lower:]')
 
             # --- YOUR COVER LOGIC ---
             if [[ "$base_name" =~ ^cover.*\.(pdf|jpg|jpeg|png|webp|avif)$ ]]; then
@@ -76,11 +73,11 @@ jobs:
             rm "$file"
           done
 
-      # 4️⃣ YOUR Sequential Rename Logic
       - name: Rename WebP files sequentially
         run: |
           find comic -type d -name "episode-*" | while read -r dir; do
             count=1
+            # Sort -V (version sort) ensures 1.webp, 2.webp, 10.webp stay in order
             find "$dir" -maxdepth 1 -type f -iname "*.webp" ! -name "cover.webp" | sort -V | while read -r img; do
               printf -v new "%03d.webp" $count
               mv "$img" "$dir/$new"
@@ -88,14 +85,7 @@ jobs:
             done
           done
 
-      # 5️⃣ Add .gitkeep to empty folders
-      - name: Add .gitkeep to empty folders
-        run: |
-          find comic -type d -empty -exec touch {}/.gitkeep \;
-          find upload -type d -empty -exec touch {}/.gitkeep \;
-
-      # 6️⃣ YOUR JSON Metadata Logic
-      - name: Generate JSON metadata for episodes
+      - name: Generate JSON metadata
         run: |
           find comic -type d -name "episode-*" | while read -r epdir; do
             comic=$(echo "$epdir" | cut -d'/' -f2)
@@ -110,8 +100,6 @@ jobs:
             echo "  \"episode\": ${episode:-0}," >> "$json_file"
             echo "  \"imageCount\": $(find "$epdir" -maxdepth 1 -type f -iname "*.webp" ! -name "cover.webp" | wc -l)," >> "$json_file"
             echo "  \"images\": [" >> "$json_file"
-            
-            # Proper JSON array formatting
             find "$epdir" -maxdepth 1 -type f -iname "*.webp" ! -name "cover.webp" | sort -V | sed '$!s/$/,/' | while read -r img; do
               url="https://cdn.spineassociation.in/${img#comic/}"
               echo "    \"$url\"" >> "$json_file"
@@ -120,15 +108,22 @@ jobs:
             echo "}" >> "$json_file"
           done
 
-      # 7️⃣ Consolidated Commit (Fixes the 403 and Double Push error)
-      - name: Commit and Push changes
+      - name: Clean up and Commit
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           
-          git add comic/
-          git add upload/
+          # 1. Remove all subdirectories in upload/ except the root .gitkeep
+          find upload -mindepth 1 -type d -exec rm -rf {} +
+          touch upload/.gitkeep
           
+          # 2. Stage changes
+          git add comic/
+          git add upload/.gitkeep
+          
+          # 3. Use 'git add -u' to stage the deletions of the uploaded files
+          git add -u upload/
+
           if ! git diff --cached --quiet; then
             git commit -m "Auto: processed uploads $(date +'%Y-%m-%d %H:%M:%S')"
             git push origin HEAD:${{ github.ref_name }}
