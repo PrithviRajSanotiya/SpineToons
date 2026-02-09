@@ -1,4 +1,4 @@
-name: Auto Convert Images to WebP + JSON
+name: Auto Convert Images to WebP + JSON + Cover
 
 on:
   push:
@@ -27,27 +27,31 @@ jobs:
             -iname "*.avif" \
           \) ! -name ".gitkeep" | while read file; do
             
-            # Determine relative folder path
+            # Determine folder paths
             rel_dir=${file#upload/}
             rel_dir=$(dirname "$rel_dir")
             
-            # Target folder
+            # Check if this is a cover
+            base_name=$(basename "$file")
+            if [ "$base_name" = "cover"* ]; then
+              target="comic/$rel_dir"
+              mkdir -p "$target"
+              cwebp -q 80 "$file" -o "$target/cover.webp"
+              rm "$file"
+              continue
+            fi
+            
+            # Normal episode images
             target="comic/$rel_dir"
             mkdir -p "$target"
-            
-            # Convert image
-            base_name=$(basename "$file")
             name_no_ext="${base_name%.*}"
             cwebp -q 80 "$file" -o "$target/$name_no_ext.webp"
-            
-            # Remove original
             rm "$file"
           done
 
       - name: Rename WebP files sequentially
         run: |
-          echo "Renaming WebP files sequentially..."
-          find comic -type d | while read dir; do
+          find comic -type d -name "episode-*" | while read dir; do
             count=1
             find "$dir" -maxdepth 1 -type f -iname "*.webp" | sort | while read img; do
               printf -v new "%03d.webp" $count
@@ -58,7 +62,6 @@ jobs:
 
       - name: Add .gitkeep to empty folders
         run: |
-          echo "Adding .gitkeep to empty folders..."
           find comic -type d | while read dir; do
             if [ -z "$(ls -A "$dir" | grep -v '.gitkeep')" ]; then
               touch "$dir/.gitkeep"
@@ -67,7 +70,6 @@ jobs:
 
       - name: Generate JSON metadata for episodes
         run: |
-          echo "Generating JSON metadata..."
           find comic -type d -name "episode-*" | while read epdir; do
             comic=$(echo "$epdir" | cut -d'/' -f2)
             season=$(echo "$epdir" | cut -d'/' -f3 | sed 's/season-//')
@@ -82,10 +84,9 @@ jobs:
             echo "  \"imageCount\": $(find "$epdir" -maxdepth 1 -type f -iname "*.webp" | wc -l)," >> $json_file
             echo "  \"images\": [" >> $json_file
             find "$epdir" -maxdepth 1 -type f -iname "*.webp" | sort | while read img; do
-              url="https://YOUR_CDN.pages.dev/${img#comic/}"
+              url="https://cdn.spineassociation.in/${img#comic/}"
               echo "    \"$url\"," >> $json_file
             done
-            # Remove last comma
             sed -i '$ s/,$//' $json_file
             echo "  ]" >> $json_file
             echo "}" >> $json_file
@@ -96,6 +97,5 @@ jobs:
           git config user.name "PrithviRajSanotiya"
           git config user.email "PrithviRajSanotiya@users.noreply.github.com"
           git add comic
-          git commit -m "Auto convert images + generate JSON" || echo "No changes"
+          git commit -m "Auto convert images + generate JSON + cover" || echo "No changes"
           git push
-          
