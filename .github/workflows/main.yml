@@ -1,4 +1,4 @@
-name: Auto Convert Images & PDFs to WebP + JSON + Covers (Token-Hardcoded)
+name: Auto Convert Images & PDFs to WebP + JSON + Covers (Token-Free)
 
 on:
   push:
@@ -20,7 +20,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y webp jq poppler-utils git imagemagick
 
-      # 3️⃣ Process uploads
+      # 3️⃣ Process uploads (covers, PDFs, all images in chapters)
       - name: Process uploads
         run: |
           echo "Processing uploaded files..."
@@ -58,12 +58,17 @@ jobs:
               continue
             fi
 
-            # --- IMAGE FILES (all types) ---
-            cwebp -q 80 "$file" -o "$target/${base_name%.*}.webp" 2>/dev/null || convert "$file" "$target/${base_name%.*}.webp"
+            # --- ALL IMAGE TYPES (nested inside chapters) ---
+            if [[ "$ext_lc" =~ ^(jpg|jpeg|png|webp|avif)$ ]]; then
+              cwebp -q 80 "$file" -o "$target/${base_name%.*}.webp" 2>/dev/null || convert "$file" "$target/${base_name%.*}.webp"
+            else
+              # Fallback for other image types
+              convert "$file" "$target/${base_name%.*}.webp"
+            fi
             rm "$file"
           done
 
-      # 4️⃣ Rename WebP files sequentially
+      # 4️⃣ Rename WebP files sequentially in all episode folders
       - name: Rename WebP files sequentially
         run: |
           find comic -type d -name "episode-*" | while read dir; do
@@ -105,20 +110,19 @@ jobs:
               url="https://cdn.spineassociation.in/${img#comic/}"
               echo "    \"$url\"," >> $json_file
             done
-            # Remove trailing comma
-            sed -i '$ s/,$//' $json_file
+            sed -i '$ s/,$//' $json_file  # Remove trailing comma
             echo "  ]" >> $json_file
             echo "}" >> $json_file
           done
 
-      # 7️⃣ Commit comic updates automatically
+      # 7️⃣ Commit comic updates automatically using GITHUB_TOKEN
       - name: Commit comic updates
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add comic/
           git commit -m "Auto: processed uploads $(date +'%Y-%m-%d %H:%M:%S')" || echo "No changes to commit"
-          git push https://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@github.com/PrithviRajSanotiya/spinetoons.git HEAD:main
+          git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/PrithviRajSanotiya/spinetoons.git HEAD:main
 
       # 8️⃣ Delete old upload files after committing
       - name: Clean upload folder
@@ -126,4 +130,4 @@ jobs:
           rm -rf upload/*
           git add upload/
           git commit -m "Auto: cleared upload folder after processing" || echo "Upload folder already empty"
-          git push https://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@github.com/PrithviRajSanotiya/spinetoons.git HEAD:main
+          git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/PrithviRajSanotiya/spinetoons.git HEAD:main
