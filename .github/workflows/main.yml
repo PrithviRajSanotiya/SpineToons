@@ -27,10 +27,7 @@ jobs:
       - name: Process uploads
         run: |
           echo "Processing uploaded files..."
-          # Use -print0 to handle spaces safely
           find upload -type f ! -name ".gitkeep" -print0 | while IFS= read -r -d '' file; do
-            # Extract path: upload/ComicName/season-1/episode-1/image.png 
-            # becomes comic/ComicName/season-1/episode-1/
             rel_path=${file#upload/}
             rel_dir=$(dirname "$rel_path")
             target="comic/$rel_dir"
@@ -77,7 +74,6 @@ jobs:
         run: |
           find comic -type d -name "episode-*" | while read -r dir; do
             count=1
-            # Sort -V (version sort) ensures 1.webp, 2.webp, 10.webp stay in order
             find "$dir" -maxdepth 1 -type f -iname "*.webp" ! -name "cover.webp" | sort -V | while read -r img; do
               printf -v new "%03d.webp" $count
               mv "$img" "$dir/$new"
@@ -94,16 +90,30 @@ jobs:
             
             json_file="$epdir/episode.json"
             
+            # Use temporary file to build JSON safely
             echo "{" > "$json_file"
             echo "  \"comic\": \"$comic\"," >> "$json_file"
             echo "  \"season\": ${season:-0}," >> "$json_file"
             echo "  \"episode\": ${episode:-0}," >> "$json_file"
-            echo "  \"imageCount\": $(find "$epdir" -maxdepth 1 -type f -iname "*.webp" ! -name "cover.webp" | wc -l)," >> "$json_file"
+            
+            # Count images correctly
+            img_count=$(find "$epdir" -maxdepth 1 -type f -iname "*.webp" ! -name "cover.webp" | wc -l)
+            echo "  \"imageCount\": $img_count," >> "$json_file"
             echo "  \"images\": [" >> "$json_file"
-            find "$epdir" -maxdepth 1 -type f -iname "*.webp" ! -name "cover.webp" | sort -V | sed '$!s/$/,/' | while read -r img; do
+            
+            # Loop through images and add commas ONLY between items
+            first=true
+            find "$epdir" -maxdepth 1 -type f -iname "*.webp" ! -name "cover.webp" | sort -V | while read -r img; do
+              if [ "$first" = true ]; then
+                first=false
+              else
+                echo "," >> "$json_file"
+              fi
               url="https://cdn.spineassociation.in/${img#comic/}"
-              echo "    \"$url\"" >> "$json_file"
+              echo -n "    \"$url\"" >> "$json_file"
             done
+            
+            echo "" >> "$json_file"
             echo "  ]" >> "$json_file"
             echo "}" >> "$json_file"
           done
@@ -113,15 +123,12 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           
-          # 1. Remove all subdirectories in upload/ except the root .gitkeep
+          # Clean upload subfolders but keep root .gitkeep
           find upload -mindepth 1 -type d -exec rm -rf {} +
           touch upload/.gitkeep
           
-          # 2. Stage changes
           git add comic/
           git add upload/.gitkeep
-          
-          # 3. Use 'git add -u' to stage the deletions of the uploaded files
           git add -u upload/
 
           if ! git diff --cached --quiet; then
